@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}สรุปผล QC - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">สรุปผล Chondaen IQC BGM Online (ตามหน่วยงาน/เครื่อง + Level)</h3>
+<p class="text-muted">
+  แสดงจำนวนครั้ง (n), ค่าเฉลี่ย (Mean), ส่วนเบี่ยงเบนมาตรฐาน (SD), ค่าต่ำสุด–สูงสุด และค่าอ้างอิง (min-max)
+</p>
+
+<div class="d-flex justify-content-end mb-2">
+  <a href="{{ url_for('qc_summary_export') }}" class="btn btn-success btn-sm">
+    ดาวน์โหลดไฟล์ Excel (CSV)
+  </a>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-sm table-bordered align-middle">
+    <thead class="table-light">
+      <tr class="text-center">
+        <th>หน่วยงาน/เครื่อง</th>
+        <th>Level</th>
+        <th style="white-space: nowrap;">n</th>
+        <th>Mean</th>
+        <th>SD</th>
+        <th>Min</th>
+        <th>Max</th>
+        <th>Ref (min-max)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in summary %}
+      <tr>
+        <td>{{ row.test_name }}</td>
+        <td>{{ row.level }}</td>
+        <td>{{ row.n }}</td>
+        <td>{{ "%.3f"|format(row.mean_value or 0) }}</td>
+        <td>{{ "%.3f"|format(row.sd or 0) }}</td>
+        <td>{{ "%.3f"|format(row.min_value or 0) }}</td>
+        <td>{{ "%.3f"|format(row.max_value or 0) }}</td>
+        <td>
+          {% if row.ref_min is not none and row.ref_max is not none %}
+            {{ "%.3f"|format(row.ref_min) }} - {{ "%.3f"|format(row.ref_max) }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="text-center text-muted">
+          ยังไม่มีข้อมูลเพียงพอสำหรับสรุปผล
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

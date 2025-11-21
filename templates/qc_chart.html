@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}กราฟ QC - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">กราฟ QC (Levey–Jennings + Westgard rules)</h3>
+<p class="text-muted">
+  เลือกหน่วยงาน/เครื่อง และระดับควบคุม (Level) ที่ต้องการ เพื่อดูกราฟ Levey–Jennings พร้อมตรวจสอบกติกา Westgard rule (1-2s, 1-3s, 2-2s, R-4s, 4-1s)
+</p>
+
+<div class="row">
+  <!-- รายการ Test + Level ให้เลือก -->
+  <div class="col-md-4">
+    <div class="card mb-3">
+      <div class="card-header">เลือกหน่วยงาน/เครื่อง + Level</div>
+      <div class="card-body" style="max-height: 420px; overflow-y: auto;">
+        {% if combos %}
+          <ul class="list-group">
+            {% for c in combos %}
+            <a
+              class="list-group-item list-group-item-action {% if c.test_name == test_name and c.level == level %}active{% endif %}"
+              href="{{ url_for('qc_chart') }}?test_name={{ c.test_name|urlencode }}&level={{ c.level|urlencode }}"
+            >
+              {{ c.test_name }} - {{ c.level }}
+            </a>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-muted mb-0">ยังไม่มีข้อมูล QC ในระบบ</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ส่วนกราฟ -->
+  <div class="col-md-8">
+    {% if stats and data_points %}
+      {% if violations %}
+        <div class="alert alert-danger">
+          <strong>แจ้งเตือน QC:</strong> พบผลที่ผิดกติกา Westgard rule
+          <ul class="mb-0">
+            {% for v in violations %}
+              <li>
+                จุดที่ {{ v.index }} ({{ v.date }}) = {{ "%.3f"|format(v.value) }}
+                -> {{ v.rules|join(", ") }}
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">ข้อเสนอแนะ/ทบทวนการแก้ปัญหา</label>
+          <textarea
+            class="form-control"
+            rows="3"
+            placeholder="พิมพ์ข้อเสนอแนะ แนวทางทบทวน หรือสาเหตุที่คาดได้ จากจุดที่ผิดกติกา Westgard rule..."
+          ></textarea>
+          <div class="form-text">
+            * ขณะนี้เป็นช่องสำหรับจดบันทึกประกอบการทบทวน (ยังไม่บันทึกเก็บในฐานข้อมูล)
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-success">
+          ไม่พบจุดที่ผิดกติกา Westgard rule จากข้อมูลที่เลือก
+        </div>
+      {% endif %}
+
+      <div class="card mb-3">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span>กราฟ QC: {{ test_name }} - {{ level }}</span>
+          <button id="downloadChartBtn" type="button" class="btn btn-outline-secondary btn-sm">
+            ดาวน์โหลดรูปกราฟ
+          </button>
+        </div>
+        <div class="card-body">
+          <p class="mb-1">
+            จำนวนตัวอย่าง (n) = {{ stats.n }} |
+            Mean = {{ "%.3f"|format(stats.mean) }} |
+            SD = {{ "%.3f"|format(stats.sd) }}
+          </p>
+          <p class="mb-2">
+            ค่าอ้างอิง (Ref range):
+            {% if stats.ref_min is not none and stats.ref_max is not none %}
+              {{ "%.3f"|format(stats.ref_min) }} - {{ "%.3f"|format(stats.ref_max) }}
+            {% else %}
+              -
+            {% endif %}
+          </p>
+          <canvas id="qcChart" height="120"></canvas>
+          <p class="mt-2 text-muted" style="font-size: 0.9rem;">
+            จุดสีแดง = ผลที่ผิดกติกา Westgard rule (เช่น 1-3s, 2-2s, R-4s, 4-1s)<br>
+            เมื่อเลื่อนเมาส์ไปบนจุด จะเห็นค่า Result, Rule ที่ผิด และชื่อหน่วยงาน/เครื่องที่ตรวจ
+          </p>
+        </div>
+      </div>
+    {% else %}
+      <div class="alert alert-info">
+        กรุณาเลือกรายการทดสอบจากด้านซ้าย เพื่อแสดงกราฟ QC
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if stats and data_points %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const dataPoints = {{ data_points|tojson }};
+  const stats = {{ stats|tojson }};
+
+  const labels = dataPoints.map((p, idx) => `${idx + 1} (${p.date})`);
+  const values = dataPoints.map(p => p.value);
+  const n = values.length;
+  const mean = stats.mean;
+  const sd = stats.sd;
+
+  const violationMask = dataPoints.map(p => p.rules && p.rules.length > 0);
+
+  const makeConstArray = (val) => Array(n).fill(val);
+  const violationValues = values.map((v, idx) => violationMask[idx] ? v : null);
+
+  const datasets = [
+    {
+      label: 'Result',
+      data: values,
+      borderWidth: 2,
+      tension: 0,
+      pointRadius: 3
+    },
+    {
+      label: 'Mean',
+      data: makeConstArray(mean),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '+1 SD',
+      data: makeConstArray(mean + sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '-1 SD',
+      data: makeConstArray(mean - sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '+2 SD',
+      data: makeConstArray(mean + 2 * sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '-2 SD',
+      data: makeConstArray(mean - 2 * sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '+3 SD',
+      data: makeConstArray(mean + 3 * sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: '-3 SD',
+      data: makeConstArray(mean - 3 * sd),
+      borderWidth: 1,
+      borderDash: [5, 5],
+      pointRadius: 0
+    },
+    {
+      label: 'Violation',
+      data: violationValues,
+      type: 'line',
+      showLine: false,
+      borderWidth: 0,
+      pointRadius: 6,
+      pointHoverRadius: 7,
+      backgroundColor: 'red'
+    }
+  ];
+
+  // เส้น Ref range ถ้ามี
+  if (stats.ref_min !== null && stats.ref_min !== undefined) {
+    datasets.push({
+      label: 'Ref min',
+      data: makeConstArray(stats.ref_min),
+      borderWidth: 1,
+      borderDash: [2, 2],
+      pointRadius: 0
+    });
+  }
+  if (stats.ref_max !== null && stats.ref_max !== undefined) {
+    datasets.push({
+      label: 'Ref max',
+      data: makeConstArray(stats.ref_max),
+      borderWidth: 1,
+      borderDash: [2, 2],
+      pointRadius: 0
+    });
+  }
+
+  const ctx = document.getElementById('qcChart').getContext('2d');
+
+  const qcChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: datasets
+    },
+    options: {
+      responsive: true,
+      interaction: {
+        mode: 'nearest',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          position: 'bottom'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const idx = context.dataIndex;
+              const point = dataPoints[idx];
+
+              if (context.dataset.label === 'Result') {
+                let base = 'Result: ' + context.parsed.y.toFixed(3);
+                if (point.rules && point.rules.length > 0) {
+                  base += ' (Rule: ' + point.rules.join(', ') + ')';
+                }
+                base += ' | หน่วยงาน/เครื่อง: ' + (point.test_name || '');
+                return base;
+              }
+
+              if (context.dataset.label === 'Violation') {
+                return 'Violation: ' + context.parsed.y.toFixed(3) +
+                       ' (' + (point.rules || []).join(', ') + ')' +
+                       ' | หน่วยงาน/เครื่อง: ' + (point.test_name || '');
+              }
+
+              return context.dataset.label + ': ' + context.parsed.y.toFixed(3);
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: 'ลำดับการตรวจ (วันที่)'
+          }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'ค่า QC'
+          }
+        }
+      }
+    }
+  });
+
+  // ปุ่มดาวน์โหลดรูปกราฟ
+  const downloadBtn = document.getElementById('downloadChartBtn');
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', function () {
+      const link = document.createElement('a');
+      link.href = qcChart.toBase64Image();
+      link.download = 'qc_chart.png';
+      link.click();
+    });
+  }
+</script>
+{% endif %}
+{% endblock %}

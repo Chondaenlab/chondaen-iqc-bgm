@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}สมัครสมาชิก - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h4 class="mb-1 text-center">สมัครสมาชิก</h4>
+        <p class="text-muted text-center mb-3">สร้างบัญชีสำหรับใช้งานระบบ Chondaen IQC BGM Online</p>
+
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Username</label>
+            <input name="username" class="form-control" autocomplete="username">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input name="password" type="password" class="form-control" autocomplete="new-password">
+          </div>
+          <button class="btn btn-success w-100">สมัครสมาชิก</button>
+        </form>
+
+        <hr>
+        <p class="text-center mb-0" style="font-size: 0.9rem;">
+          มีบัญชีอยู่แล้ว? <a href="{{ url_for('login') }}">เข้าสู่ระบบ</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

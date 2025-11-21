@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}ผล QC ย้อนหลัง - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">ผลบันทึก Chondaen IQC BGM Online (ย้อนหลัง)</h3>
+
+<form method="get" class="row g-2 mb-3 align-items-end">
+  <div class="col-md-4">
+    <label class="form-label">ค้นหาตามหน่วยงาน/เครื่อง</label>
+    <input
+      name="test_name"
+      class="form-control"
+      placeholder="เช่น OPD-1 / ER / Ward2"
+      value="{{ test_name }}"
+    >
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">จากวันที่</label>
+    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label">ถึงวันที่</label>
+    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+  </div>
+  <div class="col-md-2 d-grid">
+    <button class="btn btn-secondary">ค้นหา</button>
+  </div>
+</form>
+
+<div class="d-flex justify-content-end mb-2">
+  <a
+    href="{{ url_for('qc_export', test_name=test_name, date_from=date_from, date_to=date_to) }}"
+    class="btn btn-success btn-sm"
+  >
+    ดาวน์โหลดไฟล์ Excel (CSV)
+  </a>
+</div>
+
+<div class="table-responsive">
+  <table class="table table-sm table-striped table-bordered align-middle">
+    <thead class="table-light">
+      <tr class="text-center">
+        <th style="white-space: nowrap;">วันที่ตรวจ</th>
+        <th>หน่วยงาน/เครื่อง</th>
+        <th>Level</th>
+        <th>BGM Serial</th>
+        <th>Result</th>
+        <th>Unit</th>
+        <th>Ref (min-max)</th>
+        <th>Strip Lot</th>
+        <th>Strip Exp.</th>
+        <th>Control Lot</th>
+        <th>Control Exp.</th>
+        <th>บันทึกโดย</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.test_date }}</td>
+        <td>{{ r.test_name }}</td>
+        <td>{{ r.level }}</td>
+        <td>{{ r.bgm_serial }}</td>
+        <td>{{ "%.3f"|format(r.result_value) }}</td>
+        <td>{{ r.unit }}</td>
+        <td>
+          {% if r.ref_min is not none and r.ref_max is not none %}
+            {{ "%.3f"|format(r.ref_min) }} - {{ "%.3f"|format(r.ref_max) }}
+          {% else %}
+            -
+          {% endif %}
+        </td>
+        <td>{{ r.strip_lot }}</td>
+        <td>{{ r.strip_expiry }}</td>
+        <td>{{ r.control_lot }}</td>
+        <td>{{ r.control_expiry }}</td>
+        <td>{{ r.username }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="12" class="text-center text-muted">
+          ยังไม่มีข้อมูล QC ในเงื่อนไขที่เลือก
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

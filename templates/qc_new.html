@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block title %}บันทึกผล QC - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+
+{% block content %}
+<h3 class="mb-3">บันทึกผล Chondaen IQC BGM Online</h3>
+<p class="text-muted">
+  แบบฟอร์มบันทึก IQC BGM ต่อ 1 วัน/1 หน่วยงาน/1 เครื่อง สามารถบันทึก Control Level 0, 1, 2 ได้ในหน้าจอนี้หน้าจอเดียว
+</p>
+
+<form method="post">
+  <!-- แถวที่ 1: หน่วยงาน/เครื่อง + วันที่ตรวจ -->
+  <div class="row mb-3">
+    <div class="col-md-8">
+      <label class="form-label">หน่วยงาน/เครื่องที่ตรวจ</label>
+      <input
+        name="department"
+        class="form-control"
+        list="department_list"
+        placeholder="เช่น OPD-1 / ER / Ward2"
+      >
+      <datalist id="department_list">
+        {% for d in departments %}
+        <option value="{{ d }}">
+        {% endfor %}
+      </datalist>
+      <div class="form-text">พิมพ์ชื่อหน่วยงาน/เครื่อง ถ้าเคยบันทึกไว้แล้วจะมีรายการเด้งให้เลือก</div>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">วันที่ตรวจ</label>
+      <input type="date" name="test_date" value="{{ default_date }}" class="form-control">
+    </div>
+  </div>
+
+  <!-- แถวที่ 2: BGM Serial + Strip Lot + Strip Expiry -->
+  <div class="row mb-3">
+    <div class="col-md-4">
+      <label class="form-label">BGM Serial No.</label>
+      <input
+        name="bgm_serial"
+        class="form-control"
+        list="bgm_serial_list"
+        placeholder="เช่น S12345678"
+      >
+      <datalist id="bgm_serial_list">
+        {% for s in bgm_serials %}
+        <option value="{{ s }}">
+        {% endfor %}
+      </datalist>
+      <div class="form-text">ดึง Serial ที่เคยใช้มาให้เลือก แก้ไขได้ตามจริง</div>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Strip Lot</label>
+      <input name="strip_lot" class="form-control">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">วันหมดอายุ Strip (Exp.)</label>
+      <input type="date" name="strip_expiry" class="form-control">
+    </div>
+  </div>
+
+  <!-- หัวข้อ Control Level -->
+  <div class="row mb-2">
+    <div class="col-12">
+      <h5 class="fw-bold" style="color: #198754;">Control Level</h5>
+    </div>
+  </div>
+
+  <!-- datalist Control Lot + Ref range -->
+  <datalist id="control_lot_list">
+    {% for lot in control_lots %}
+    <option value="{{ lot }}">
+    {% endfor %}
+  </datalist>
+
+  <datalist id="ref_min_list">
+    {% for r in ref_ranges %}
+    <option value="{{ "%.3f"|format(r[0]) }}">
+    {% endfor %}
+  </datalist>
+  <datalist id="ref_max_list">
+    {% for r in ref_ranges %}
+    <option value="{{ "%.3f"|format(r[1]) }}">
+    {% endfor %}
+  </datalist>
+
+  <!-- แถว Level 0 -->
+  <div class="row mb-2 align-items-end">
+    <div class="col-md-2">
+      <label class="form-label mb-0">Control Level 0</label>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Control Lot</label>
+      <input name="lv0_control_lot" class="form-control" list="control_lot_list">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">วันหมดอายุ (Exp.)</label>
+      <input type="date" name="lv0_control_expiry" class="form-control">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ค่าอ้างอิง (min - max)</label>
+      <div class="input-group">
+        <input
+          name="lv0_ref_min"
+          class="form-control"
+          placeholder="min"
+          list="ref_min_list"
+        >
+        <span class="input-group-text">-</span>
+        <input
+          name="lv0_ref_max"
+          class="form-control"
+          placeholder="max"
+          list="ref_max_list"
+        >
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ผลการทดสอบ (mg/dL)</label>
+      <input name="lv0_result_value" class="form-control">
+    </div>
+  </div>
+
+  <!-- แถว Level 1 -->
+  <div class="row mb-2 align-items-end">
+    <div class="col-md-2">
+      <label class="form-label mb-0">Control Level 1</label>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Control Lot</label>
+      <input name="lv1_control_lot" class="form-control" list="control_lot_list">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">วันหมดอายุ (Exp.)</label>
+      <input type="date" name="lv1_control_expiry" class="form-control">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ค่าอ้างอิง (min - max)</label>
+      <div class="input-group">
+        <input
+          name="lv1_ref_min"
+          class="form-control"
+          placeholder="min"
+          list="ref_min_list"
+        >
+        <span class="input-group-text">-</span>
+        <input
+          name="lv1_ref_max"
+          class="form-control"
+          placeholder="max"
+          list="ref_max_list"
+        >
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ผลการทดสอบ (mg/dL)</label>
+      <input name="lv1_result_value" class="form-control">
+    </div>
+  </div>
+
+  <!-- แถว Level 2 -->
+  <div class="row mb-3 align-items-end">
+    <div class="col-md-2">
+      <label class="form-label mb-0">Control Level 2</label>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">Control Lot</label>
+      <input name="lv2_control_lot" class="form-control" list="control_lot_list">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">วันหมดอายุ (Exp.)</label>
+      <input type="date" name="lv2_control_expiry" class="form-control">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ค่าอ้างอิง (min - max)</label>
+      <div class="input-group">
+        <input
+          name="lv2_ref_min"
+          class="form-control"
+          placeholder="min"
+          list="ref_min_list"
+        >
+        <span class="input-group-text">-</span>
+        <input
+          name="lv2_ref_max"
+          class="form-control"
+          placeholder="max"
+          list="ref_max_list"
+        >
+      </div>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">ผลการทดสอบ (mg/dL)</label>
+      <input name="lv2_result_value" class="form-control">
+    </div>
+  </div>
+
+  <button class="btn btn-primary">บันทึกข้อมูล</button>
+  <a href="{{ url_for('qc_list') }}" class="btn btn-outline-secondary ms-2">ย้อนกลับ</a>
+</form>
+{% endblock %}
