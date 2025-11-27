@@ -2,26 +2,43 @@
 {% block title %}กราฟ QC - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
 
 {% block content %}
-<h3 class="mb-3">กราฟ QC (Levey–Jennings + Westgard rules)</h3>
+<h3 class="mb-3">กราฟ QC (Levey–Jennings + Westgard Rules)</h3>
+
 <p class="text-muted">
-  เลือกหน่วยงาน/เครื่อง และระดับควบคุม (Level) ที่ต้องการ เพื่อดูกราฟ Levey–Jennings พร้อมตรวจสอบกติกา Westgard rule (1-2s, 1-3s, 2-2s, R-4s, 4-1s)
+  ระบบจะตรวจ Westgard rule อัตโนมัติ (1-2s, 1-3s, 2-2s, R-4s, 4-1s, 10x)
+  และแสดงสัญลักษณ์/สีบนกราฟ พร้อมรายการจุดที่ “Reject” ใต้กราฟ
 </p>
 
 <div class="row">
-  <!-- รายการ Test + Level ให้เลือก -->
   <div class="col-md-4">
     <div class="card mb-3">
-      <div class="card-header">เลือกหน่วยงาน/เครื่อง + Level</div>
-      <div class="card-body" style="max-height: 420px; overflow-y: auto;">
+      <div class="card-header">เลือกรูปแบบการแสดงผล</div>
+      <div class="card-body" style="max-height: 460px; overflow-y: auto;">
         {% if combos %}
+          <h6 class="text-success">ตาม Control Level (ทุกหน่วยงาน)</h6>
+          <ul class="list-group mb-3">
+            <a class="list-group-item list-group-item-action {% if mode=='level' and level=='Level 0' %}active{% endif %}"
+               href="{{ url_for('qc_chart', mode='level', level='Level 0', start_date=start_date, end_date=end_date) }}">
+              Control Level 0 (ทุกหน่วยงาน)
+            </a>
+            <a class="list-group-item list-group-item-action {% if mode=='level' and level=='Level 1' %}active{% endif %}"
+               href="{{ url_for('qc_chart', mode='level', level='Level 1', start_date=start_date, end_date=end_date) }}">
+              Control Level 1 (ทุกหน่วยงาน)
+            </a>
+            <a class="list-group-item list-group-item-action {% if mode=='level' and level=='Level 2' %}active{% endif %}"
+               href="{{ url_for('qc_chart', mode='level', level='Level 2', start_date=start_date, end_date=end_date) }}">
+              Control Level 2 (ทุกหน่วยงาน)
+            </a>
+          </ul>
+
+          <h6 class="text-primary">ตามหน่วยงาน/เครื่อง + Control Level</h6>
           <ul class="list-group">
             {% for c in combos %}
-            <a
-              class="list-group-item list-group-item-action {% if c.test_name == test_name and c.level == level %}active{% endif %}"
-              href="{{ url_for('qc_chart') }}?test_name={{ c.test_name|urlencode }}&level={{ c.level|urlencode }}"
-            >
-              {{ c.test_name }} - {{ c.level }}
-            </a>
+              <a class="list-group-item list-group-item-action
+                        {% if mode=='single' and c.test_name==test_name and c.level==level %}active{% endif %}"
+                 href="{{ url_for('qc_chart', mode='single', test_name=c.test_name, level=c.level, start_date=start_date, end_date=end_date) }}">
+                {{ c.test_name }} — {{ c.level }}
+              </a>
             {% endfor %}
           </ul>
         {% else %}
@@ -31,70 +48,85 @@
     </div>
   </div>
 
-  <!-- ส่วนกราฟ -->
   <div class="col-md-8">
     {% if stats and data_points %}
-      {% if violations %}
-        <div class="alert alert-danger">
-          <strong>แจ้งเตือน QC:</strong> พบผลที่ผิดกติกา Westgard rule
-          <ul class="mb-0">
-            {% for v in violations %}
-              <li>
-                จุดที่ {{ v.index }} ({{ v.date }}) = {{ "%.3f"|format(v.value) }}
-                -> {{ v.rules|join(", ") }}
-              </li>
-            {% endfor %}
-          </ul>
-        </div>
+      <form method="get" class="row g-2 mb-3">
+        <input type="hidden" name="mode" value="{{ mode }}">
+        {% if mode == 'single' %}
+          <input type="hidden" name="test_name" value="{{ test_name }}">
+          <input type="hidden" name="level" value="{{ level }}">
+        {% else %}
+          <input type="hidden" name="level" value="{{ level }}">
+        {% endif %}
 
-        <div class="mb-3">
-          <label class="form-label fw-semibold">ข้อเสนอแนะ/ทบทวนการแก้ปัญหา</label>
-          <textarea
-            class="form-control"
-            rows="3"
-            placeholder="พิมพ์ข้อเสนอแนะ แนวทางทบทวน หรือสาเหตุที่คาดได้ จากจุดที่ผิดกติกา Westgard rule..."
-          ></textarea>
-          <div class="form-text">
-            * ขณะนี้เป็นช่องสำหรับจดบันทึกประกอบการทบทวน (ยังไม่บันทึกเก็บในฐานข้อมูล)
-          </div>
+        <div class="col-md-4">
+          <label class="form-label">วันที่เริ่มต้น</label>
+          <input type="date" name="start_date" class="form-control" value="{{ start_date or '' }}">
         </div>
-      {% else %}
-        <div class="alert alert-success">
-          ไม่พบจุดที่ผิดกติกา Westgard rule จากข้อมูลที่เลือก
+        <div class="col-md-4">
+          <label class="form-label">วันที่สิ้นสุด</label>
+          <input type="date" name="end_date" class="form-control" value="{{ end_date or '' }}">
         </div>
-      {% endif %}
+        <div class="col-md-4 d-flex align-items-end">
+          <button type="submit" class="btn btn-primary me-2">กรองวันที่</button>
 
-      <div class="card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>กราฟ QC: {{ test_name }} - {{ level }}</span>
-          <button id="downloadChartBtn" type="button" class="btn btn-outline-secondary btn-sm">
-            ดาวน์โหลดรูปกราฟ
+          {% if mode == 'level' %}
+            <a href="{{ url_for('qc_chart', mode='level', level=level) }}" class="btn btn-outline-secondary me-2">ล้างตัวกรอง</a>
+          {% else %}
+            <a href="{{ url_for('qc_chart', mode='single', test_name=test_name, level=level) }}" class="btn btn-outline-secondary me-2">ล้างตัวกรอง</a>
+          {% endif %}
+
+          <button type="button" class="btn btn-success" onclick="downloadChartImage()">
+            ดาวน์โหลดกราฟ (PNG)
           </button>
         </div>
+      </form>
+
+      <div class="card mb-3">
+        <div class="card-header">
+          {% if mode == 'level' %}
+            กราฟ QC: {{ level }} (รวมทุกหน่วยงาน/เครื่อง)
+          {% else %}
+            กราฟ QC: {{ test_name }} — {{ level }}
+          {% endif %}
+        </div>
         <div class="card-body">
-          <p class="mb-1">
-            จำนวนตัวอย่าง (n) = {{ stats.n }} |
+          <p class="mb-2">
+            n = {{ stats.n }} |
             Mean = {{ "%.3f"|format(stats.mean) }} |
             SD = {{ "%.3f"|format(stats.sd) }}
           </p>
-          <p class="mb-2">
-            ค่าอ้างอิง (Ref range):
-            {% if stats.ref_min is not none and stats.ref_max is not none %}
-              {{ "%.3f"|format(stats.ref_min) }} - {{ "%.3f"|format(stats.ref_max) }}
-            {% else %}
-              -
-            {% endif %}
-          </p>
-          <canvas id="qcChart" height="120"></canvas>
-          <p class="mt-2 text-muted" style="font-size: 0.9rem;">
-            จุดสีแดง = ผลที่ผิดกติกา Westgard rule (เช่น 1-3s, 2-2s, R-4s, 4-1s)<br>
-            เมื่อเลื่อนเมาส์ไปบนจุด จะเห็นค่า Result, Rule ที่ผิด และชื่อหน่วยงาน/เครื่องที่ตรวจ
+          <canvas id="qcChart" height="190"></canvas>
+
+          <p class="mt-2 text-muted" style="font-size:0.9rem;">
+            Mean = ฟ้า, ±1SD = เหลืองอ่อน, ±2SD = เหลืองเข้ม, ±3SD = ส้ม
+            <br>
+            จุดเขียว = ผ่าน, ส้ม = Warning (1-2s), แดง = Reject (เช่น 1-3s, 2-2s, R-4s, 4-1s, 10x)
           </p>
         </div>
       </div>
+
+      {% if violations %}
+      <div class="alert alert-danger">
+        <strong>QC Reject (Westgard):</strong> พบจุดที่ผิดกติกา
+        <ul class="mb-0">
+          {% for v in violations %}
+            <li>
+              {{ v.date }} — {{ v.dept }} ({{ v.level }}) = {{ "%.3f"|format(v.value) }}
+              [{{ "%.2f"|format(v.z) }} SD] → {{ v.rules|join(", ") }}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% else %}
+      <div class="alert alert-success">
+        ไม่พบจุดที่ Reject ตาม Westgard rule ในข้อมูลชุดนี้
+      </div>
+      {% endif %}
+
     {% else %}
       <div class="alert alert-info">
-        กรุณาเลือกรายการทดสอบจากด้านซ้าย เพื่อแสดงกราฟ QC
+        กรุณาเลือกรายการ/ช่วงวันที่ให้ตรงกับข้อมูลที่มีการบันทึก
       </div>
     {% endif %}
   </div>
@@ -103,180 +135,155 @@
 {% if stats and data_points %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-  const dataPoints = {{ data_points|tojson }};
+  const raw = {{ data_points|tojson }};
   const stats = {{ stats|tojson }};
+  const mode = "{{ mode }}";
+  const chartTestName = "{{ test_name or '' }}";
+  const chartLevel = "{{ level or '' }}";
 
-  const labels = dataPoints.map((p, idx) => `${idx + 1} (${p.date})`);
-  const values = dataPoints.map(p => p.value);
-  const n = values.length;
+  // map วันที่ → xIndex เพื่อให้วันเดียวกันอยู่ตำแหน่งเดียวกัน
+  const uniqueDates = [...new Set(raw.map(p => p.date))].sort();
+  const dateToX = {};
+  uniqueDates.forEach((d, idx) => dateToX[d] = idx);
+
+  const points = raw.map(p => ({
+    ...p,
+    xIndex: dateToX[p.date],
+    rules: p.rules || [],
+    z: (p.z ?? 0),
+    severity: p.severity || "ok",
+  }));
+
   const mean = stats.mean;
   const sd = stats.sd;
 
-  const violationMask = dataPoints.map(p => p.rules && p.rules.length > 0);
-
-  const makeConstArray = (val) => Array(n).fill(val);
-  const violationValues = values.map((v, idx) => violationMask[idx] ? v : null);
-
-  const datasets = [
-    {
-      label: 'Result',
-      data: values,
-      borderWidth: 2,
-      tension: 0,
-      pointRadius: 3
-    },
-    {
-      label: 'Mean',
-      data: makeConstArray(mean),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '+1 SD',
-      data: makeConstArray(mean + sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '-1 SD',
-      data: makeConstArray(mean - sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '+2 SD',
-      data: makeConstArray(mean + 2 * sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '-2 SD',
-      data: makeConstArray(mean - 2 * sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '+3 SD',
-      data: makeConstArray(mean + 3 * sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: '-3 SD',
-      data: makeConstArray(mean - 3 * sd),
-      borderWidth: 1,
-      borderDash: [5, 5],
-      pointRadius: 0
-    },
-    {
-      label: 'Violation',
-      data: violationValues,
-      type: 'line',
-      showLine: false,
-      borderWidth: 0,
-      pointRadius: 6,
-      pointHoverRadius: 7,
-      backgroundColor: 'red'
-    }
+  // เส้นแนวนอนเต็มกราฟ
+  const makeHLine = (val) => [
+    { x: -0.5, y: val },
+    { x: uniqueDates.length - 0.5, y: val },
   ];
 
-  // เส้น Ref range ถ้ามี
-  if (stats.ref_min !== null && stats.ref_min !== undefined) {
-    datasets.push({
-      label: 'Ref min',
-      data: makeConstArray(stats.ref_min),
-      borderWidth: 1,
-      borderDash: [2, 2],
-      pointRadius: 0
-    });
-  }
-  if (stats.ref_max !== null && stats.ref_max !== undefined) {
-    datasets.push({
-      label: 'Ref max',
-      data: makeConstArray(stats.ref_max),
-      borderWidth: 1,
-      borderDash: [2, 2],
-      pointRadius: 0
-    });
-  }
+  const showLineResult = (mode === "single");
+
+  // ---- marker rules
+  const hasRule = (p, r) => (p.rules || []).includes(r);
+
+  const pointStyleFn = (ctx) => {
+    const p = points[ctx.dataIndex];
+    if (!p) return 'circle';
+    if (hasRule(p, "2-2s")) return 'triangle';
+    if (hasRule(p, "R-4s")) return 'rectRot';
+    if (hasRule(p, "4-1s")) return 'rect';
+    if (hasRule(p, "10x"))  return 'star';
+    return 'circle';
+  };
+
+  const pointRadiusFn = (ctx) => {
+    const p = points[ctx.dataIndex];
+    if (!p) return 4;
+    if (hasRule(p, "1-3s")) return 8;   // แดงใหญ่
+    if (p.severity === "reject") return 6;
+    if (p.severity === "warning") return 5;
+    return 4;
+  };
+
+  const pointColorFn = (ctx) => {
+    const p = points[ctx.dataIndex];
+    if (!p) return 'rgba(0,180,0,1)';
+    if (p.severity === "reject") return 'rgba(220,20,60,1)';     // แดง
+    if (p.severity === "warning") return 'rgba(255,140,0,1)';    // ส้ม
+    return 'rgba(0,180,0,1)';                                    // เขียว
+  };
+
+  const pointBorderFn = (ctx) => {
+    const p = points[ctx.dataIndex];
+    if (!p) return 'rgba(0,120,0,1)';
+    if (p.severity === "reject") return 'rgba(160,0,0,1)';
+    if (p.severity === "warning") return 'rgba(160,80,0,1)';
+    return 'rgba(0,120,0,1)';
+  };
 
   const ctx = document.getElementById('qcChart').getContext('2d');
 
   const qcChart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: labels,
-      datasets: datasets
+      labels: uniqueDates,
+      datasets: [
+        {
+          label: 'Result',
+          data: points.map(p => ({ x: p.xIndex, y: p.value })),
+          showLine: showLineResult,
+          borderWidth: showLineResult ? 2 : 0,
+          borderColor: 'rgba(0,150,0,1)',
+          pointStyle: pointStyleFn,
+          pointRadius: pointRadiusFn,
+          pointBackgroundColor: pointColorFn,
+          pointBorderColor: pointBorderFn,
+          pointHoverRadius: 7,
+        },
+        { label: 'Mean', data: makeHLine(mean), borderColor: 'rgba(30,144,255,1)', borderWidth: 2, pointRadius: 0 },
+        { label: '+1 SD', data: makeHLine(mean + sd), borderColor: 'rgba(255,255,120,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+        { label: '-1 SD', data: makeHLine(mean - sd), borderColor: 'rgba(255,255,120,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+        { label: '+2 SD', data: makeHLine(mean + 2*sd), borderColor: 'rgba(255,215,0,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+        { label: '-2 SD', data: makeHLine(mean - 2*sd), borderColor: 'rgba(255,215,0,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+        { label: '+3 SD', data: makeHLine(mean + 3*sd), borderColor: 'rgba(255,140,0,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+        { label: '-3 SD', data: makeHLine(mean - 3*sd), borderColor: 'rgba(255,140,0,1)', borderWidth: 1.5, borderDash: [4,4], pointRadius: 0 },
+      ]
     },
     options: {
       responsive: true,
-      interaction: {
-        mode: 'nearest',
-        intersect: false
-      },
+      devicePixelRatio: 2.8, // รูปชัดขึ้น
+      interaction: { mode: 'nearest', intersect: false },
       plugins: {
-        legend: {
-          position: 'bottom'
-        },
+        legend: { position: 'bottom' },
         tooltip: {
           callbacks: {
             label: function(context) {
-              const idx = context.dataIndex;
-              const point = dataPoints[idx];
+              const p = points[context.dataIndex];
+              const v = context.parsed.y;
 
-              if (context.dataset.label === 'Result') {
-                let base = 'Result: ' + context.parsed.y.toFixed(3);
-                if (point.rules && point.rules.length > 0) {
-                  base += ' (Rule: ' + point.rules.join(', ') + ')';
-                }
-                base += ' | หน่วยงาน/เครื่อง: ' + (point.test_name || '');
-                return base;
+              let line = `${p.dept} (${p.level}) : ${v.toFixed(3)} mg/dL`;
+              line += `  [${(p.z ?? 0).toFixed(2)} SD]`;
+
+              if (p.rules && p.rules.length > 0) {
+                line += `  | Rule: ${p.rules.join(", ")}`;
+                if ((p.rules || []).includes("R-4s")) line += " (Precision issue?)";
               }
-
-              if (context.dataset.label === 'Violation') {
-                return 'Violation: ' + context.parsed.y.toFixed(3) +
-                       ' (' + (point.rules || []).join(', ') + ')' +
-                       ' | หน่วยงาน/เครื่อง: ' + (point.test_name || '');
-              }
-
-              return context.dataset.label + ': ' + context.parsed.y.toFixed(3);
+              return line;
             }
           }
         }
       },
       scales: {
         x: {
-          title: {
-            display: true,
-            text: 'ลำดับการตรวจ (วันที่)'
-          }
+          type: 'linear',
+          title: { display: true, text: 'วันที่ตรวจ' },
+          ticks: {
+            stepSize: 1,
+            callback: function(value) {
+              const idx = Math.round(value);
+              return uniqueDates[idx] || '';
+            }
+          },
+          min: -0.5,
+          max: uniqueDates.length - 0.5
         },
-        y: {
-          title: {
-            display: true,
-            text: 'ค่า QC'
-          }
-        }
+        y: { title: { display: true, text: 'ค่า QC (mg/dL)' } }
       }
     }
   });
 
-  // ปุ่มดาวน์โหลดรูปกราฟ
-  const downloadBtn = document.getElementById('downloadChartBtn');
-  if (downloadBtn) {
-    downloadBtn.addEventListener('click', function () {
-      const link = document.createElement('a');
-      link.href = qcChart.toBase64Image();
-      link.download = 'qc_chart.png';
-      link.click();
-    });
+  function downloadChartImage() {
+    const link = document.createElement('a');
+    const safeMode = mode || 'mode';
+    const safeTestName = chartTestName ? chartTestName.replace(/\s+/g, '_') : 'ALL';
+    const safeLevel = chartLevel ? chartLevel.replace(/\s+/g, '_') : 'ALL';
+    link.download = `qc_chart_${safeMode}_${safeTestName}_${safeLevel}.png`;
+    link.href = qcChart.toBase64Image('image/png', 1.0);
+    link.click();
   }
+  window.downloadChartImage = downloadChartImage;
 </script>
 {% endif %}
 {% endblock %}

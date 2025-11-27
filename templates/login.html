@@ -1,29 +1,31 @@
 {% extends "base.html" %}
-{% block title %}เข้าสู่ระบบ - ระบบบันทึก Chondaen IQC BGM Online{% endblock %}
+{% block title %}เข้าสู่ระบบ - Chondaen IQC BGM Online{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
-  <div class="col-md-4">
+  <div class="col-md-5">
     <div class="card shadow-sm">
+      <div class="card-header text-center">
+        <strong>เข้าสู่ระบบ</strong>
+      </div>
       <div class="card-body">
-        <h4 class="mb-1 text-center">เข้าสู่ระบบ</h4>
-        <p class="text-muted text-center mb-3">สำหรับใช้งานระบบบันทึก Chondaen IQC BGM Online</p>
-
         <form method="post">
           <div class="mb-3">
-            <label class="form-label">ชื่อผู้ใช้งาน (Username)</label>
-            <input name="username" class="form-control" autocomplete="username">
+            <label class="form-label">Username</label>
+            <input type="text" name="username" class="form-control" required>
           </div>
           <div class="mb-3">
-            <label class="form-label">รหัสผ่าน (Password)</label>
-            <input name="password" type="password" class="form-control" autocomplete="current-password">
+            <label class="form-label">Password</label>
+            <input type="password" name="password" class="form-control" required>
           </div>
-          <button class="btn btn-primary w-100">เข้าสู่ระบบ</button>
+          <button type="submit" class="btn btn-primary w-100 mb-2">เข้าสู่ระบบ</button>
+          <a href="{{ url_for('register') }}" class="btn btn-outline-secondary w-100">
+            สมัครสมาชิก (สำหรับผู้ใช้ใหม่)
+          </a>
         </form>
 
-        <hr>
-        <p class="text-center mb-0" style="font-size: 0.9rem;">
-          ยังไม่มีบัญชี? <a href="{{ url_for('register') }}">สมัครสมาชิก</a>
+        <p class="text-muted mt-3" style="font-size: 0.9rem;">
+          ลืมรหัสผ่าน? กรุณาติดต่อผู้ดูแลระบบ (<strong>Admin</strong>) เพื่อรีเซ็ตรหัสผ่านให้ใหม่
         </p>
       </div>
     </div>
