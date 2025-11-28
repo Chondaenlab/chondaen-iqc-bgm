@@ -12,19 +12,50 @@
         <thead class="table-light">
           <tr>
             <th style="width: 5%;">#</th>
-            <th style="width: 25%;">Username</th>
-            <th style="width: 70%;">Password Hash</th>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Reset Password</th>
           </tr>
         </thead>
         <tbody>
-          {% for u in users %}
-          <tr>
-            <td>{{ loop.index }}</td>
-            <td>{{ u.username }}</td>
-            <td>{{ u.password_hash }}</td>
-          </tr>
-          {% endfor %}
-        </tbody>
+  {% for u in users %}
+  <tr>
+    <!-- # ลำดับ -->
+    <td class="text-muted">{{ loop.index }}</td>
+
+    <!-- Username -->
+    <td>{{ u.username }}</td>
+
+    <!-- Role -->
+    <td>
+      {% if u.is_admin %}
+        <span class="badge text-bg-success">Admin</span>
+      {% else %}
+        <span class="badge text-bg-secondary">User</span>
+      {% endif %}
+    </td>
+
+    <!-- Reset Password -->
+    <td style="min-width: 260px;">
+      {% if not u.is_admin %}
+      <form method="POST"
+            action="{{ url_for('admin_reset_password', user_id=u.id) }}"
+            class="d-flex gap-2">
+        <input type="password"
+               name="new_password"
+               class="form-control form-control-sm"
+               placeholder="ตั้งรหัสใหม่"
+               required>
+        <button class="btn btn-sm btn-warning" type="submit">Reset</button>
+      </form>
+      {% else %}
+        <span class="text-muted">-</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</tbody>
+
       </table>
     </div>
     {% else %}
