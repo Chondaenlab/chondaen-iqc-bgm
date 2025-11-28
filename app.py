@@ -373,47 +373,74 @@ def login():
 # ----------------------------------------
 @app.route("/register", methods=["GET", "POST"])
 def register():
-    """
-    สมัครสมาชิกใหม่:
-    - username ต้องไม่ซ้ำ
-    - password จะถูกเก็บแบบ hash
-    """
     if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        confirm  = request.form.get("confirm", "")
+        username = (request.form.get("username") or "").strip()
 
-        if not username or not password:
-            flash("กรุณากรอก Username และ Password", "warning")
+        def _norm(s: str) -> str:
+            s = (s or "")
+            s = s.replace("\r", "").replace("\n", "")
+            s = s.replace("\u200b", "").replace("\ufeff", "")  # กัน zero-width/BOM
+            return s.strip()
+
+        password = _norm((request.form.getlist("password") or [""])[-1])
+        confirm  = _norm((request.form.getlist("confirm_password") or [""])[-1])
+
+      
+        if not username:
+            flash("กรุณากรอก Username", "danger")
+            return render_template("register.html")
+
+        if username.lower() == "admin":
+            flash("Username นี้สงวนไว้สำหรับผู้ดูแลระบบ", "danger")
             return render_template("register.html")
 
         if password != confirm:
-            flash("Password และยืนยัน Password ไม่ตรงกัน", "warning")
+            flash("Password และ Confirm Password ไม่ตรงกัน", "danger")
+            return render_template("register.html")
+
+        if len(password) < 4:
+            flash("Password สั้นเกินไป (อย่างน้อย 4 ตัวอักษร)", "danger")
             return render_template("register.html")
 
         db = get_db()
-        # เช็กว่ามี username นี้แล้วหรือยัง
-        existing = db.execute(
-            "SELECT id FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
 
-        if existing:
-            flash("มีชื่อผู้ใช้นี้ในระบบแล้ว กรุณาเลือกชื่ออื่น", "danger")
+        # เช็คซ้ำ
+        try:
+            existing = db.execute(
+                "SELECT id FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+        except Exception as e:
+            flash(f"ตาราง users มีปัญหา (หา username ไม่เจอ): {e}", "danger")
             return render_template("register.html")
 
-        # บันทึก user ใหม่
+        if existing:
+            flash("Username นี้ถูกใช้แล้ว", "danger")
+            return render_template("register.html")
+
         pw_hash = generate_password_hash(password)
-        db.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (username, pw_hash),
-        )
-        db.commit()
 
-        flash("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบด้วยบัญชีใหม่ของคุณ", "success")
-        return redirect(url_for("login"))
+        # INSERT แบบ fallback หลายรูปแบบ (กัน schema ไม่ตรง)
+        insert_variants = [
+            ("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
+            ("INSERT INTO users (username, password, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
+            ("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, pw_hash)),
+            ("INSERT INTO users (username, password) VALUES (?, ?)", (username, pw_hash)),
+        ]
 
-    # กรณี GET → แสดงฟอร์มสมัครสมาชิก
+        last_err = None
+        for sql, params in insert_variants:
+            try:
+                db.execute(sql, params)
+                db.commit()
+                flash("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ", "success")
+                return redirect(url_for("login"))
+            except Exception as e:
+                last_err = e
+
+        flash(f"สมัครสมาชิกไม่สำเร็จ (DB schema ไม่ตรง): {last_err}", "danger")
+        return render_template("register.html")
+
     return render_template("register.html")
 
 
