@@ -6,6 +6,27 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import sqlite3
 import datetime
+from werkzeug.security import generate_password_hash
+import sqlite3
+
+def set_password(db, user_id: int, new_password: str):
+    pw_hash = generate_password_hash(new_password)
+
+    # ลองอัปเดตได้ทั้ง schema แบบ password_hash หรือ password
+    variants = [
+        ("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id)),
+        ("UPDATE users SET password = ? WHERE id = ?", (pw_hash, user_id)),
+    ]
+
+    last_err = None
+    for sql, params in variants:
+        try:
+            db.execute(sql, params)
+            db.commit()
+            return True, None
+        except Exception as e:
+            last_err = e
+    return False, last_err
 
 def _sign(x: float) -> int:
     if x > 0:
@@ -383,7 +404,13 @@ def register():
             return s.strip()
 
         password = _norm((request.form.getlist("password") or [""])[-1])
-        confirm  = _norm((request.form.getlist("confirm_password") or [""])[-1])
+
+# ถ้าไม่ได้ส่ง confirm มา (หน้า template เก่า/ผิด) ให้ fallback = password เพื่อไม่ให้เด้ง error มั่ว
+        if "confirm_password" not in request.form:
+    confirm = password
+        else:
+    confirm = _norm((request.form.getlist("confirm_password") or [""])[-1])
+
 
       
         if not username:
@@ -758,45 +785,25 @@ def qc_chart():
 # ----------------------------------------
 # หน้าดูผลย้อนหลัง (เฉพาะ Admin)
 # ----------------------------------------
-@app.route("/qc/history", methods=["GET", "POST"])
+@app.route("/admin/users/<int:user_id>/reset_password", methods=["POST"])
 @login_required
 @admin_required
-def qc_history():
-    """
-    หน้าดูผลย้อนหลัง Chondaen IQC BGM Online (เฉพาะ Admin)
-    - เลือกช่วงวันได้
-    - แสดงรายการ QC ทั้งหมดในช่วงนั้น
-    - มีปุ่ม Delete ต่อท้ายแต่ละรายการ (เฉพาะ Admin)
-    """
+def admin_reset_password(user_id):
+    new_password = (request.form.get("new_password") or "").strip()
+
+    if len(new_password) < 4:
+        flash("รหัสผ่านใหม่ต้องยาวอย่างน้อย 4 ตัวอักษร", "danger")
+        return redirect(url_for("admin_users"))
+
     db = get_db()
+    ok, err = set_password(db, user_id, new_password)
+    if not ok:
+        flash(f"รีเซ็ตรหัสผ่านไม่สำเร็จ: {err}", "danger")
+        return redirect(url_for("admin_users"))
 
-    start_date = request.args.get("start_date")
-    end_date = request.args.get("end_date")
+    flash("รีเซ็ตรหัสผ่านสำเร็จ (แจ้งรหัสใหม่ให้ผู้ใช้แล้ว)", "success")
+    return redirect(url_for("admin_users"))
 
-    query = """
-        SELECT id, result_date, test_name, level, value
-        FROM qc_results
-        WHERE 1=1
-    """
-    params = []
-
-    if start_date:
-        query += " AND result_date >= ?"
-        params.append(start_date)
-    if end_date:
-        query += " AND result_date <= ?"
-        params.append(end_date)
-
-    query += " ORDER BY result_date DESC, id DESC"
-
-    rows = db.execute(query, params).fetchall()
-
-    return render_template(
-        "qc_history.html",
-        results=rows,
-        start_date=start_date,
-        end_date=end_date,
-    )
 
 @app.route("/qc/history/export")
 @login_required
