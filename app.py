@@ -1084,7 +1084,27 @@ def qc_summary_export():
         "attachment; filename=chondaen_iqc_summary.csv"
     )
     return resp
+@app.route("/admin/reset/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_reset_password(user_id):
+    new_password = (request.form.get("new_password") or "").strip()
+    if len(new_password) < 4:
+        flash("รหัสผ่านใหม่สั้นเกินไป (อย่างน้อย 4 ตัวอักษร)", "danger")
+        return redirect(url_for("admin_users"))
 
+    db = get_db()
+    pw_hash = generate_password_hash(new_password)
+
+    # รองรับ schema ได้ทั้ง password_hash และ password
+    try:
+        db.execute("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id))
+    except Exception:
+        db.execute("UPDATE users SET password = ? WHERE id = ?", (pw_hash, user_id))
+
+    db.commit()
+    flash("รีเซ็ตรหัสผ่านสำเร็จ", "success")
+    return redirect(url_for("admin_users"))
 # ----------------------------------------
 # (Admin) ดูรายชื่อผู้ใช้งานทั้งหมด
 # ----------------------------------------
