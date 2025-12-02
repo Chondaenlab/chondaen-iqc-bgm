@@ -7,63 +7,59 @@
 <form method="get" class="row g-2 mb-3">
   <div class="col-md-4">
     <label class="form-label">วันที่เริ่มต้น</label>
-    <input type="date" name="start_date" class="form-control"
-           value="{{ start_date or '' }}">
+    <input type="date" name="start_date" class="form-control" value="{{ start_date or '' }}">
   </div>
   <div class="col-md-4">
     <label class="form-label">วันที่สิ้นสุด</label>
-    <input type="date" name="end_date" class="form-control"
-           value="{{ end_date or '' }}">
+    <input type="date" name="end_date" class="form-control" value="{{ end_date or '' }}">
   </div>
   <div class="col-md-4 d-flex align-items-end">
     <button type="submit" class="btn btn-primary me-2">ค้นหา</button>
     <a href="{{ url_for('qc_history') }}" class="btn btn-outline-secondary">ล้างตัวกรอง</a>
   </div>
 </form>
-<a
-  class="btn btn-success mb-3"
-  href="{{ url_for('qc_history_export', start_date=start_date, end_date=end_date) }}"
->
+
+<a class="btn btn-success mb-3"
+   href="{{ url_for('qc_history_export', start_date=start_date, end_date=end_date) }}">
   ดาวน์โหลด Excel (ผลย้อนหลัง)
 </a>
 
 <div class="card">
   <div class="card-body p-0">
-    {% if results %}
-    <div class="table-responsive">
-      <table class="table table-striped table-hover table-sm mb-0">
-        <thead class="table-light">
-          <tr>
-            <th>#</th>
-            <th>วันที่ตรวจ</th>
-            <th>หน่วยงาน/เครื่อง</th>
-            <th>ระดับ (Level)</th>
-            <th>ผล (mg/dL)</th>
-            <th style="width: 10%;">จัดการ</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in results %}
-          <tr>
-            <td>{{ loop.index }}</td>
-            <td>{{ row.result_date }}</td>
-            <td>{{ row.test_name }}</td>
-            <td>{{ row.level }}</td>
-            <td>{{ "%.3f"|format(row.value) }}</td>
-            <td>
-              <form method="post"
-                    action="{{ url_for('qc_delete', qc_id=row.id) }}"
-                    onsubmit="return confirm('ยืนยันลบรายการนี้?');">
-                <button type="submit" class="btn btn-sm btn-danger">
-                  ลบ
-                </button>
-              </form>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% if results is defined and results|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-striped table-hover table-sm mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>วันที่ตรวจ</th>
+              <th>หน่วยงาน/เครื่อง</th>
+              <th>ระดับ (Level)</th>
+              <th>ผล (mg/dL)</th>
+              <th style="width: 10%;">จัดการ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in results %}
+              {% set v = row.get("value") %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ row.get("result_date", "") }}</td>
+                <td>{{ row.get("test_name", "") }}</td>
+                <td>{{ row.get("level", "") }}</td>
+                <td>{{ "%.3f"|format(v) if v is not none else "" }}</td>
+                <td>
+                  <form method="post"
+                        action="{{ url_for('qc_delete', qc_id=row.get('id')) }}"
+                        onsubmit="return confirm('ยืนยันลบรายการนี้?');">
+                    <button type="submit" class="btn btn-sm btn-danger">ลบ</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     {% else %}
       <p class="p-3 mb-0 text-muted">ไม่พบข้อมูลในช่วงวันที่ที่เลือก</p>
     {% endif %}

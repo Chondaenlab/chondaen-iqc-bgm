@@ -1,8 +1,6 @@
 venv/
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# database local (แล้วแต่คุณ จะใส่/ไม่ใส่ก็ได้)
-
+chondaen_iqc_bgm.db
+.instance/
+.env
