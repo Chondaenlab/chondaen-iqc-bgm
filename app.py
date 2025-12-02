@@ -188,8 +188,11 @@ def evaluate_westgard_series(points, mean: float, sd: float):
 # =========================================================
 # App / Auth / DB
 # =========================================================
+import os
+
 app = Flask(__name__)
-app.secret_key = "ใส่ key ของคุณ"
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+
 
 
 def login_required(f):
