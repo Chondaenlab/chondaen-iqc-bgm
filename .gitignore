@@ -4,3 +4,4 @@ __pycache__/
 chondaen_iqc_bgm.db
 .instance/
 .env
+*.db
