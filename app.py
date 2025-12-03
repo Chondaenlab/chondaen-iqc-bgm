@@ -1,49 +1,59 @@
-from flask import Flask, g, session, flash, redirect, url_for, request, render_template, make_response
-import os, sqlite3
-from werkzeug.security import generate_password_hash, check_password_hash
-from functools import wraps
+# app.py
+from __future__ import annotations
 
+import os
+import io
+import csv
+import sqlite3
+import datetime
+from functools import wraps
+from typing import Dict, List, Tuple, Any
+
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    session, flash, g, make_response
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+
+
+# =========================================================
+# App config
+# =========================================================
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("DB_PATH") or os.path.join(BASE_DIR, "chondaen_iqc_bgm.db")
+
 
 # =========================================================
-# Westgard / Stats Helpers (ของเดิมคุณ)
+# DB helpers (auto-migrate schema every time app starts)
 # =========================================================
-# -----------------------------
-# DB config (รองรับตั้งค่า path ผ่าน Render env ได้)
-# -----------------------------
-DB_PATH = os.environ.get("DB_PATH", "chondaen_iqc_bgm.db")
+def _table_cols(db: sqlite3.Connection, table: str) -> set:
+    return {r["name"] for r in db.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
-def get_db():
-    if not hasattr(g, "_database"):
-        g._database = sqlite3.connect(DB_PATH)
-        g._database.row_factory = sqlite3.Row
-    return g._database
-
-
-def ensure_columns(db, table: str, columns: dict):
-    """columns = {col_name: 'SQL_TYPE'}"""
-    existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
-    for col, col_type in columns.items():
-        if col not in existing:
-            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
-
-
-def init_db():
-    db = get_db()
-
-    # ตาราง users
+def ensure_schema(db: sqlite3.Connection) -> None:
+    # --- users table ---
     db.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
+            password_hash TEXT
         )
     """)
 
-    # ตาราง qc_results (สร้างให้ครบคอลัมน์ที่ระบบใช้จริง)
+    # เติมคอลัมน์ users ที่อาจขาดใน schema เก่า
+    ucols = _table_cols(db, "users")
+    if "password_hash" not in ucols:
+        db.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+    if "password" not in ucols:
+        # เผื่อ schema เก่าใช้ชื่อ password
+        db.execute("ALTER TABLE users ADD COLUMN password TEXT")
+    if "is_admin" not in ucols:
+        db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+
+    # --- qc_results table ---
     db.execute("""
         CREATE TABLE IF NOT EXISTS qc_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,8 +73,9 @@ def init_db():
         )
     """)
 
-    # เผื่อเคยสร้างตารางเก่าไว้แล้ว: เติมคอลัมน์ที่ขาดให้ครบอัตโนมัติ
-    ensure_columns(db, "qc_results", {
+    # เติมคอลัมน์ qc_results ที่อาจขาดใน schema เก่า
+    qcols = _table_cols(db, "qc_results")
+    needed = {
         "user_id": "INTEGER",
         "result_date": "TEXT",
         "test_name": "TEXT",
@@ -77,34 +88,126 @@ def init_db():
         "strip_exp": "TEXT",
         "control_lot": "TEXT",
         "control_exp": "TEXT",
-    })
+    }
+    for col, col_type in needed.items():
+        if col not in qcols:
+            db.execute(f"ALTER TABLE qc_results ADD COLUMN {col} {col_type}")
 
     db.commit()
+
+
+def get_db() -> sqlite3.Connection:
+    if not hasattr(g, "_database"):
+        con = sqlite3.connect(DB_PATH)
+        con.row_factory = sqlite3.Row
+        g._database = con
+
+        # ensure schema once per process
+        if not getattr(app, "_schema_ready", False):
+            ensure_schema(con)
+            app._schema_ready = True
+
+    return g._database
+
+
+@app.teardown_appcontext
+def close_db(_exc):
+    db = getattr(g, "_database", None)
+    if db is not None:
+        db.close()
+
+
+# =========================================================
+# Auth helpers
+# =========================================================
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if "user_id" not in session:
+            flash("กรุณาเข้าสู่ระบบก่อนใช้งาน", "warning")
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def is_admin() -> bool:
+    # ใช้ทั้ง flag และเผื่อ username
+    if session.get("is_admin") == 1:
+        return True
+    return (session.get("username") or "").strip().lower() == "admin"
+
+
+def admin_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not is_admin():
+            flash("คุณไม่มีสิทธิ์เข้าหน้านี้ (เฉพาะผู้ดูแลระบบ)", "danger")
+            return redirect(url_for("qc_form"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+@app.context_processor
+def inject_user_info():
+    return {
+        "is_admin": is_admin(),
+        "current_username": session.get("username"),
+    }
+
+
 def ensure_admin_user():
     db = get_db()
     row = db.execute("SELECT id FROM users WHERE username = ?", ("Admin",)).fetchone()
     if row is None:
         pw_hash = generate_password_hash("111")
-        db.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            ("Admin", pw_hash),
-        )
-        db.commit()
+        # รองรับทั้ง password_hash / password + is_admin
+        variants = [
+            ("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 1)", ("Admin", pw_hash)),
+            ("INSERT INTO users (username, password, is_admin) VALUES (?, ?, 1)", ("Admin", pw_hash)),
+            ("INSERT INTO users (username, password_hash) VALUES (?, ?)", ("Admin", pw_hash)),
+            ("INSERT INTO users (username, password) VALUES (?, ?)", ("Admin", pw_hash)),
+        ]
+        last_err = None
+        for sql, params in variants:
+            try:
+                db.execute(sql, params)
+                db.commit()
+                return
+            except Exception as e:
+                last_err = e
+        raise RuntimeError(f"Cannot create admin user: {last_err}")
+
+
+def set_password(db: sqlite3.Connection, user_id: int, new_password: str):
+    pw_hash = generate_password_hash(new_password)
+    variants = [
+        ("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id)),
+        ("UPDATE users SET password = ? WHERE id = ?", (pw_hash, user_id)),
+    ]
+    last_err = None
+    for sql, params in variants:
+        try:
+            db.execute(sql, params)
+            db.commit()
+            return True, None
+        except Exception as e:
+            last_err = e
+    return False, last_err
+
+
 @app.before_request
 def _startup_once():
-    # รันครั้งเดียวต่อ process ตอนมี request แรก
-    if not getattr(app, "_db_inited", False):
-        init_db()
+    # รันครั้งเดียวต่อ process เพื่อสร้าง admin แน่ๆ
+    if not getattr(app, "_admin_ready", False):
+        db = get_db()
+        ensure_schema(db)
         ensure_admin_user()
-        app._db_inited = True
+        app._admin_ready = True
 
 
-# -----------------------------
-# เรียก init_db + ensure_admin_user ตอนเริ่มรันแอป
-# (ให้คงบล็อคนี้ไว้ท้ายไฟล์เหมือนเดิม)
-# -----------------------------
-
-
+# =========================================================
+# Westgard / stats helpers (คง logic เดิมของคุณ)
+# =========================================================
 def _sign(x: float) -> int:
     if x > 0:
         return 1
@@ -114,13 +217,12 @@ def _sign(x: float) -> int:
 
 
 def _fallback_sd(values, mean):
-    """กันเคส SD=0 เพื่อให้คำนวณ rule ได้ (ข้อมูลน้อย/ค่าซ้ำกันหมด)"""
     if not values:
         return 1.0
     vmin, vmax = min(values), max(values)
     spread = vmax - vmin
     if spread > 0:
-        return spread / 4.0  # สมมติ range ~ 4SD (±2SD)
+        return spread / 4.0
     if mean != 0:
         return abs(mean) * 0.05
     return 1.0
@@ -136,10 +238,6 @@ def _mean_sd(values):
 
 
 def build_level_stats(points):
-    """
-    points: list[dict] ต้องมี keys: level, value
-    คืนค่า dict: { "Level 0": {"mean":..., "sd":...}, ... }
-    """
     from collections import defaultdict
     grp = defaultdict(list)
     for p in points:
@@ -155,13 +253,6 @@ def build_level_stats(points):
 
 
 def apply_run_r4s(points_all, level_stats):
-    """
-    R-4s (within-run):
-      ใน run เดียวกัน (dept + date) ถ้ามีอย่างน้อย 1 level ที่ z >= +2
-      และอย่างน้อย 1 level ที่ z <= -2  => R-4s
-    mark เฉพาะจุดที่เป็นตัว trigger (abs(z)>=2) ใน run นั้น
-    คืน set ของ ids ที่โดน R-4s
-    """
     from collections import defaultdict
 
     enriched = []
@@ -188,20 +279,10 @@ def apply_run_r4s(points_all, level_stats):
             for pp in pts:
                 if abs(pp["z_run"]) >= 2:
                     bad_ids.add(pp["id"])
-
     return bad_ids
 
 
 def evaluate_westgard_series(points, mean: float, sd: float):
-    """
-    Westgard แบบ series ตามเวลา (ใน level เดียว):
-      1-2s (warning), 1-3s, 2-2s, 4-1s, 10x
-
-    points: list[dict] ต้องมี {"id","value","date"}
-    คืน:
-      - points_enriched: เพิ่ม z, rules, severity
-      - violations: รายการ reject เพื่อโชว์ใต้กราฟ
-    """
     pts = [dict(p) for p in points]
     values = [p["value"] for p in pts if p.get("value") is not None]
     if not values:
@@ -222,33 +303,29 @@ def evaluate_westgard_series(points, mean: float, sd: float):
 
     rules_by_idx = [set() for _ in pts]
 
-    # 1-2s / 1-3s
     for i, zi in enumerate(z):
         if abs(zi) >= 3:
             rules_by_idx[i].add("1-3s")
         if abs(zi) >= 2:
-            rules_by_idx[i].add("1-2s")  # warning
+            rules_by_idx[i].add("1-2s")
 
-    # 2-2s
     for i in range(1, len(z)):
-        if (abs(z[i]) >= 2) and (abs(z[i - 1]) >= 2) and (_sign(z[i]) == _sign(z[i - 1])) and (_sign(z[i]) != 0):
+        if (abs(z[i]) >= 2) and (abs(z[i-1]) >= 2) and (_sign(z[i]) == _sign(z[i-1])) and (_sign(z[i]) != 0):
             rules_by_idx[i].add("2-2s")
-            rules_by_idx[i - 1].add("2-2s")
+            rules_by_idx[i-1].add("2-2s")
 
-    # 4-1s
     for i in range(3, len(z)):
-        window = z[i - 3:i + 1]
+        window = z[i-3:i+1]
         s = _sign(window[0])
         if s != 0 and all(_sign(w) == s and abs(w) >= 1 for w in window):
-            for k in range(i - 3, i + 1):
+            for k in range(i-3, i+1):
                 rules_by_idx[k].add("4-1s")
 
-    # 10x
     for i in range(9, len(z)):
-        window = z[i - 9:i + 1]
+        window = z[i-9:i+1]
         s = _sign(window[0])
         if s != 0 and all(_sign(w) == s for w in window):
-            for k in range(i - 9, i + 1):
+            for k in range(i-9, i+1):
                 rules_by_idx[k].add("10x")
 
     reject_set = {"1-3s", "2-2s", "4-1s", "10x"}
@@ -280,161 +357,7 @@ def evaluate_westgard_series(points, mean: float, sd: float):
 
 
 # =========================================================
-# App / Auth / DB
-# =========================================================
-import os
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-    
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if "user_id" not in session:
-            flash("กรุณาเข้าสู่ระบบก่อนใช้งาน", "warning")
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return decorated_function
-
-
-def is_admin():
-    return session.get("username") == "Admin"
-
-
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not is_admin():
-            flash("คุณไม่มีสิทธิ์เข้าหน้านี้ (เฉพาะผู้ดูแลระบบ)", "danger")
-            return redirect(url_for("qc_form"))
-        return f(*args, **kwargs)
-    return decorated_function
-
-
-@app.context_processor
-def inject_user_info():
-    return {
-        "is_admin": is_admin(),
-        "current_username": session.get("username"),
-    }
-
-
-def get_db():
-    if not hasattr(g, "_database"):
-        g._database = sqlite3.connect("chondaen_iqc_bgm.db")
-        g._database.row_factory = sqlite3.Row
-    return g._database
-
-
-@app.teardown_appcontext
-def close_db(exception=None):
-    db = getattr(g, "_database", None)
-    if db is not None:
-        db.close()
-
-
-def init_db():
-    db = get_db()
-
-    # users (ตัวอย่างพื้นฐาน)
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL
-        )
-        """
-    )
-
-    # qc_results (ตัวอย่างพื้นฐาน)
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS qc_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            test_name TEXT,
-            level TEXT,
-            result_date TEXT,
-            value REAL,
-            user_id INTEGER,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-        """
-    )
-    db.commit()
-
-
-def _norm(s: str) -> str:
-    s = (s or "")
-    s = s.replace("\r", "").replace("\n", "")
-    s = s.replace("\u200b", "").replace("\ufeff", "")  # กัน zero-width/BOM
-    return s.strip()
-
-
-def fetch_user_by_username(db, username: str):
-    """รองรับ schema ที่อาจเป็น password_hash หรือ password"""
-    try:
-        return db.execute(
-            "SELECT id, username, password_hash AS pw FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
-    except Exception:
-        return db.execute(
-            "SELECT id, username, password AS pw FROM users WHERE username = ?",
-            (username,),
-        ).fetchone()
-
-
-def insert_user_fallback(db, username: str, pw_hash: str):
-    """รองรับ schema ได้ทั้ง password_hash และ password และ (อาจมี/ไม่มี) is_admin"""
-    insert_variants = [
-        ("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
-        ("INSERT INTO users (username, password, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
-        ("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, pw_hash)),
-        ("INSERT INTO users (username, password) VALUES (?, ?)", (username, pw_hash)),
-    ]
-    last_err = None
-    for sql, params in insert_variants:
-        try:
-            db.execute(sql, params)
-            db.commit()
-            return True, None
-        except Exception as e:
-            last_err = e
-    return False, last_err
-
-
-def set_password(db, user_id: int, new_password: str):
-    pw_hash = generate_password_hash(new_password)
-
-    variants = [
-        ("UPDATE users SET password_hash = ? WHERE id = ?", (pw_hash, user_id)),
-        ("UPDATE users SET password = ? WHERE id = ?", (pw_hash, user_id)),
-    ]
-
-    last_err = None
-    for sql, params in variants:
-        try:
-            db.execute(sql, params)
-            db.commit()
-            return True, None
-        except Exception as e:
-            last_err = e
-    return False, last_err
-
-
-def ensure_admin_user():
-    db = get_db()
-    row = db.execute("SELECT id FROM users WHERE username = ?", ("Admin",)).fetchone()
-    if row is None:
-        ok, err = insert_user_fallback(db, "Admin", generate_password_hash("111"))
-        if not ok:
-            # ถ้า schema แปลกมากจริง ๆ จะได้รู้
-            print("Ensure Admin failed:", err)
-
-
-# =========================================================
-# Routes: Index / Login / Logout / Register
+# Routes
 # =========================================================
 @app.route("/")
 def index():
@@ -446,68 +369,32 @@ def index():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = _norm(request.form.get("username"))
-        password = _norm(request.form.get("password"))
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "")
 
         db = get_db()
-        user = fetch_user_by_username(db, username)
 
-        if user and check_password_hash(user["pw"], password):
+        user = db.execute(
+            """
+            SELECT id, username,
+                   COALESCE(password_hash, password) AS pw,
+                   COALESCE(is_admin, 0) AS is_admin
+            FROM users
+            WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+
+        if user and user["pw"] and check_password_hash(user["pw"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
+            session["is_admin"] = int(user["is_admin"] or 0)
             flash("เข้าสู่ระบบสำเร็จ", "success")
             return redirect(url_for("qc_form"))
-        else:
-            flash("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "danger")
+
+        flash("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง", "danger")
 
     return render_template("login.html")
-
-
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        username = _norm(request.form.get("username"))
-        password = _norm(request.form.get("password"))
-        confirm = _norm(request.form.get("confirm_password"))
-
-        if not username:
-            flash("กรุณากรอก Username", "danger")
-            return render_template("register.html")
-
-        if username.lower() == "admin":
-            flash("Username นี้สงวนไว้สำหรับผู้ดูแลระบบ", "danger")
-            return render_template("register.html")
-
-        if not confirm:
-            flash("กรุณากรอก Confirm Password", "danger")
-            return render_template("register.html")
-
-        if password != confirm:
-            flash("Password และ Confirm Password ไม่ตรงกัน", "danger")
-            return render_template("register.html")
-
-        if len(password) < 4:
-            flash("Password สั้นเกินไป (อย่างน้อย 4 ตัวอักษร)", "danger")
-            return render_template("register.html")
-
-        db = get_db()
-
-        # เช็คซ้ำ
-        existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
-        if existing:
-            flash("Username นี้ถูกใช้แล้ว", "danger")
-            return render_template("register.html")
-
-        pw_hash = generate_password_hash(password)
-        ok, err = insert_user_fallback(db, username, pw_hash)
-        if not ok:
-            flash(f"สมัครสมาชิกไม่สำเร็จ (DB schema อาจไม่ตรง): {err}", "danger")
-            return render_template("register.html")
-
-        flash("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ", "success")
-        return redirect(url_for("login"))
-
-    return render_template("register.html")
 
 
 @app.route("/logout")
@@ -517,45 +404,74 @@ def logout():
     return redirect(url_for("login"))
 
 
-# =========================================================
-# QC Form
-# =========================================================
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = (request.form.get("password") or "").replace("\r", "").replace("\n", "").strip()
+        confirm = (request.form.get("confirm_password") or "").replace("\r", "").replace("\n", "").strip()
+
+        if not confirm:
+            flash("กรุณากรอก Confirm Password", "danger")
+            return render_template("register.html")
+        if password != confirm:
+            flash("Password และ Confirm Password ไม่ตรงกัน", "danger")
+            return render_template("register.html")
+        if len(password) < 4:
+            flash("Password สั้นเกินไป (อย่างน้อย 4 ตัวอักษร)", "danger")
+            return render_template("register.html")
+        if not username:
+            flash("กรุณากรอก Username", "danger")
+            return render_template("register.html")
+        if username.strip().lower() == "admin":
+            flash("Username นี้สงวนไว้สำหรับผู้ดูแลระบบ", "danger")
+            return render_template("register.html")
+
+        db = get_db()
+        existing = db.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+        if existing:
+            flash("Username นี้ถูกใช้แล้ว", "danger")
+            return render_template("register.html")
+
+        pw_hash = generate_password_hash(password)
+
+        variants = [
+            ("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
+            ("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, pw_hash)),
+            ("INSERT INTO users (username, password, is_admin) VALUES (?, ?, 0)", (username, pw_hash)),
+            ("INSERT INTO users (username, password) VALUES (?, ?)", (username, pw_hash)),
+        ]
+        last_err = None
+        for sql, params in variants:
+            try:
+                db.execute(sql, params)
+                db.commit()
+                flash("สมัครสมาชิกสำเร็จ กรุณาเข้าสู่ระบบ", "success")
+                return redirect(url_for("login"))
+            except Exception as e:
+                last_err = e
+
+        flash(f"สมัครสมาชิกไม่สำเร็จ: {last_err}", "danger")
+
+    return render_template("register.html")
+
+
 @app.route("/qc", methods=["GET", "POST"])
 @login_required
 def qc_form():
     db = get_db()
 
     if request.method == "POST":
-        columns_to_add = [
-            ("user_id", "INTEGER"),
-            ("result_date", "TEXT"),
-            ("test_name", "TEXT"),
-            ("level", "TEXT"),
-            ("value", "REAL"),
-            ("ref_min", "REAL"),
-            ("ref_max", "REAL"),
-            ("bgm_serial", "TEXT"),
-            ("strip_lot", "TEXT"),
-            ("strip_exp", "TEXT"),
-            ("control_lot", "TEXT"),
-            ("control_exp", "TEXT"),
-        ]
-        for col_name, col_type in columns_to_add:
-            try:
-                db.execute(f"ALTER TABLE qc_results ADD COLUMN {col_name} {col_type}")
-            except sqlite3.OperationalError:
-                pass
-
-        department = _norm(request.form.get("department"))
+        department = (request.form.get("department") or "").strip()
         qc_date = request.form.get("qc_date") or datetime.date.today().isoformat()
-        bgm_serial = _norm(request.form.get("bgm_serial"))
-        strip_lot = _norm(request.form.get("strip_lot"))
+        bgm_serial = (request.form.get("bgm_serial") or "").strip()
+        strip_lot = (request.form.get("strip_lot") or "").strip()
         strip_exp = request.form.get("strip_exp") or None
 
         user_id = session.get("user_id")
 
         def save_level(level_label: str, prefix: str):
-            ctrl_lot = _norm(request.form.get(f"{prefix}_lot"))
+            ctrl_lot = (request.form.get(f"{prefix}_lot") or "").strip()
             ctrl_exp = request.form.get(f"{prefix}_exp") or None
             ref_min = request.form.get(f"{prefix}_ref_min")
             ref_max = request.form.get(f"{prefix}_ref_max")
@@ -563,6 +479,7 @@ def qc_form():
 
             if not value:
                 return
+
             try:
                 value_f = float(value)
             except ValueError:
@@ -599,9 +516,6 @@ def qc_form():
     return render_template("qc_form.html")
 
 
-# =========================================================
-# QC Chart
-# =========================================================
 @app.route("/qc/chart")
 @login_required
 def qc_chart():
@@ -615,11 +529,14 @@ def qc_chart():
         """
     ).fetchall()
 
-    mode = request.args.get("mode", "level")  # level / single
+    mode = request.args.get("mode", "level")   # level / single
     level = request.args.get("level")
     test_name = request.args.get("test_name")
     start_date = request.args.get("start_date", "")
     end_date = request.args.get("end_date", "")
+
+    if mode not in ("level", "single"):
+        mode = "level"
 
     if not combos:
         return render_template(
@@ -635,9 +552,7 @@ def qc_chart():
             end_date=end_date,
         )
 
-    if mode not in ("level", "single"):
-        mode = "level"
-
+    # 1) display points
     params = []
     if mode == "level":
         if not level:
@@ -689,6 +604,7 @@ def qc_chart():
             end_date=end_date,
         )
 
+    # 2) all points for run-based R-4s
     params_all = []
     if mode == "single":
         q_all = """
@@ -703,6 +619,7 @@ def qc_chart():
             FROM qc_results
             WHERE 1=1
         """
+        params_all = []
 
     if start_date:
         q_all += " AND result_date >= ?"
@@ -723,7 +640,6 @@ def qc_chart():
 
     disp_vals = [p["value"] for p in display_points]
     mean_disp, sd_disp = _mean_sd(disp_vals)
-
     if level in level_stats:
         mean_disp = level_stats[level]["mean"]
         sd_disp = level_stats[level]["sd"]
@@ -742,7 +658,7 @@ def qc_chart():
 
     for dept, pts in grp.items():
         pts_sorted = sorted(pts, key=lambda x: (x["date"], x["id"]))
-        enriched, _ = evaluate_westgard_series(pts_sorted, mean_disp, sd_disp)
+        enriched, _vios = evaluate_westgard_series(pts_sorted, mean_disp, sd_disp)
 
         for ep in enriched:
             if ep["id"] in bad_r4_ids:
@@ -761,7 +677,7 @@ def qc_chart():
                     "level": ep.get("level"),
                     "value": ep.get("value"),
                     "z": ep.get("z", 0.0),
-                    "rules": ep.get("rules", []),
+                    "rules": ep.get("rules", [])
                 })
 
         enriched_all.extend(enriched)
@@ -780,37 +696,44 @@ def qc_chart():
     )
 
 
-# =========================================================
-# Admin: Reset password (เหลืออันเดียว! ไม่ซ้ำชื่อฟังก์ชัน)
-# =========================================================
-@app.route("/admin/users/<int:user_id>/reset_password", methods=["POST"])
+@app.route("/qc/history")
 @login_required
 @admin_required
-def admin_reset_password(user_id):
-    new_password = _norm(request.form.get("new_password"))
-    confirm = _norm(request.form.get("confirm_password"))
-
-    if len(new_password) < 4:
-        flash("รหัสผ่านใหม่ต้องยาวอย่างน้อย 4 ตัวอักษร", "danger")
-        return redirect(url_for("admin_users"))
-
-    if confirm and (new_password != confirm):
-        flash("Password และ Confirm Password ไม่ตรงกัน", "danger")
-        return redirect(url_for("admin_users"))
-
+def qc_history():
     db = get_db()
-    ok, err = set_password(db, user_id, new_password)
-    if not ok:
-        flash(f"รีเซ็ตรหัสผ่านไม่สำเร็จ: {err}", "danger")
-        return redirect(url_for("admin_users"))
+    start_date = request.args.get("start_date", "")
+    end_date = request.args.get("end_date", "")
 
-    flash("รีเซ็ตรหัสผ่านสำเร็จ", "success")
-    return redirect(url_for("admin_users"))
+    query = """
+        SELECT id, result_date, test_name, level,
+               value, ref_min, ref_max,
+               bgm_serial, strip_lot, strip_exp,
+               control_lot, control_exp
+        FROM qc_results
+        WHERE 1=1
+    """
+    params = []
+
+    if start_date:
+        query += " AND result_date >= ?"
+        params.append(start_date)
+    if end_date:
+        query += " AND result_date <= ?"
+        params.append(end_date)
+
+    query += " ORDER BY result_date DESC, test_name, level, id DESC"
+    rows = db.execute(query, params).fetchall()
+
+    results = [dict(r) for r in rows]  # template ใช้ row["xxx"]
+
+    return render_template(
+        "qc_history.html",
+        results=results,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
-# =========================================================
-# Export history CSV
-# =========================================================
 @app.route("/qc/history/export")
 @login_required
 @admin_required
@@ -843,11 +766,10 @@ def qc_history_export():
 
     output = io.StringIO()
     writer = csv.writer(output)
-
     writer.writerow([
         "ID", "วันที่ตรวจ", "หน่วยงาน/เครื่อง", "Level", "ผล (mg/dL)",
         "ค่าอ้างอิงต่ำสุด", "ค่าอ้างอิงสูงสุด",
-        "BGM Serial", "Strip Lot", "Strip Exp", "Control Lot", "Control Exp",
+        "BGM Serial", "Strip Lot", "Strip Exp", "Control Lot", "Control Exp"
     ])
 
     for r in rows:
@@ -865,47 +787,7 @@ def qc_history_export():
     resp.headers["Content-Disposition"] = "attachment; filename=chondaen_iqc_history.csv"
     return resp
 
-@app.route("/qc/history")
-@login_required
-@admin_required
-def qc_history():
-    db = get_db()
-    start_date = request.args.get("start_date", "")
-    end_date = request.args.get("end_date", "")
 
-    query = """
-        SELECT id, result_date, test_name, level,
-               value, ref_min, ref_max,
-               bgm_serial, strip_lot, strip_exp,
-               control_lot, control_exp
-        FROM qc_results
-        WHERE 1=1
-    """
-    params = []
-
-    if start_date:
-        query += " AND result_date >= ?"
-        params.append(start_date)
-    if end_date:
-        query += " AND result_date <= ?"
-        params.append(end_date)
-
-    query += " ORDER BY result_date DESC, test_name, level, id DESC"
-
-    rows = db.execute(query, params).fetchall()
-    results = [dict(r) for r in rows]  # ✅ ส่งเป็น dict ชัวร์
-
-    return render_template(
-        "qc_history.html",
-        results=results,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-
-# =========================================================
-# Delete QC
-# =========================================================
 @app.route("/qc/delete/<int:qc_id>", methods=["POST"])
 @login_required
 @admin_required
@@ -914,12 +796,9 @@ def qc_delete(qc_id):
     db.execute("DELETE FROM qc_results WHERE id = ?", (qc_id,))
     db.commit()
     flash("ลบรายการ QC เรียบร้อยแล้ว", "success")
-    return redirect(request.referrer or url_for("qc_form"))
+    return redirect(request.referrer or url_for("qc_history"))
 
 
-# =========================================================
-# Summary + Export
-# =========================================================
 @app.route("/qc/summary", methods=["GET"])
 @login_required
 @admin_required
@@ -934,7 +813,6 @@ def qc_summary():
         WHERE 1=1
     """
     params = []
-
     if start_date:
         query += " AND result_date >= ?"
         params.append(start_date)
@@ -979,9 +857,14 @@ def qc_summary():
             "ref_max": ref_max,
         })
 
-    summary.sort(key=lambda x: (x["test_name"], x["level"]))
+    summary.sort(key=lambda x: (x["test_name"] or "", x["level"] or ""))
 
-    return render_template("qc_summary.html", summary=summary, start_date=start_date, end_date=end_date)
+    return render_template(
+        "qc_summary.html",
+        summary=summary,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 @app.route("/qc/summary/export")
@@ -1021,6 +904,7 @@ def qc_summary_export():
         values = [i["value"] for i in items if i["value"] is not None]
         if not values:
             continue
+
         mean = statistics.fmean(values)
         sd = statistics.pstdev(values) if len(values) > 1 else 0.0
         vmin = min(values)
@@ -1043,19 +927,17 @@ def qc_summary_export():
             "ref_max": ref_max,
         })
 
-    summary_rows.sort(key=lambda x: (x["test_name"], x["level"]))
+    summary_rows.sort(key=lambda x: (x["test_name"] or "", x["level"] or ""))
 
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow([
-        "หน่วยงาน/เครื่อง", "Level", "จำนวน (n)", "Mean", "SD", "Min", "Max", "Ref Min", "Ref Max"
-    ])
-
+    writer.writerow(["หน่วยงาน/เครื่อง", "Level", "จำนวน (n)", "Mean", "SD", "Min", "Max", "Ref Min", "Ref Max"])
     for row in summary_rows:
         writer.writerow([
-            row["test_name"], row["level"], row["n"], row["mean"], row["sd"],
-            row["min"], row["max"], row["ref_min"], row["ref_max"],
+            row["test_name"], row["level"], row["n"],
+            row["mean"], row["sd"], row["min"], row["max"],
+            row["ref_min"], row["ref_max"],
         ])
 
     csv_data = "\ufeff" + output.getvalue()
@@ -1067,24 +949,40 @@ def qc_summary_export():
     return resp
 
 
-# =========================================================
-# Admin: Users list (ไม่โชว์ password)
-# =========================================================
 @app.route("/admin/users")
 @login_required
 @admin_required
 def admin_users():
     db = get_db()
-    users = db.execute("SELECT id, username FROM users ORDER BY id").fetchall()
+    users = db.execute(
+        """
+        SELECT id, username, COALESCE(is_admin,0) AS is_admin
+        FROM users
+        ORDER BY id
+        """
+    ).fetchall()
     return render_template("admin_users.html", users=users)
 
 
-# =========================================================
-# Boot
-# =========================================================
-with app.app_context():
-    init_db()
-    ensure_admin_user()
+# รองรับทั้ง endpoint แบบเดิม/ใหม่ (กัน template เก่า)
+@app.route("/admin/users/<int:user_id>/reset_password", methods=["POST"])
+@app.route("/admin/reset/<int:user_id>", methods=["POST"])
+@login_required
+@admin_required
+def admin_reset_password(user_id):
+    new_password = (request.form.get("new_password") or "").strip()
+    if len(new_password) < 4:
+        flash("รหัสผ่านใหม่ต้องยาวอย่างน้อย 4 ตัวอักษร", "danger")
+        return redirect(url_for("admin_users"))
+
+    db = get_db()
+    ok, err = set_password(db, user_id, new_password)
+    if not ok:
+        flash(f"รีเซ็ตรหัสผ่านไม่สำเร็จ: {err}", "danger")
+        return redirect(url_for("admin_users"))
+
+    flash("รีเซ็ตรหัสผ่านสำเร็จ (แจ้งรหัสใหม่ให้ผู้ใช้แล้ว)", "success")
+    return redirect(url_for("admin_users"))
 
 
 if __name__ == "__main__":
