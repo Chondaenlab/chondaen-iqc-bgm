@@ -3,6 +3,11 @@
 
 {% block content %}
 <h3 class="mb-3">ผลบันทึก Chondaen IQC BGM Online (ย้อนหลัง)</h3>
+{% if total_count is defined %}
+<div class="alert alert-info py-2">
+  DEBUG: จำนวนแถวทั้งหมดใน qc_results = {{ total_count }}
+</div>
+{% endif %}
 
 <form method="get" class="row g-2 mb-3">
   <div class="col-md-4">

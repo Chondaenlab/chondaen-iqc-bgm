@@ -724,14 +724,19 @@ def qc_history():
     query += " ORDER BY result_date DESC, test_name, level, id DESC"
     rows = db.execute(query, params).fetchall()
 
-    results = [dict(r) for r in rows]  # template ใช้ row["xxx"]
+    results = [dict(r) for r in rows]
+
+    # DEBUG: นับจำนวนแถวทั้งหมดใน qc_results
+    total_count = db.execute("SELECT COUNT(*) FROM qc_results").fetchone()[0]
 
     return render_template(
         "qc_history.html",
         results=results,
         start_date=start_date,
         end_date=end_date,
+        total_count=total_count,   # ส่งไปให้ template ด้วย
     )
+
 
 
 @app.route("/qc/history/export")
