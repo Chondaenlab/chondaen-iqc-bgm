@@ -6,11 +6,92 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import sqlite3
 import datetime
-
+import os
+from flask import g
 
 # =========================================================
 # Westgard / Stats Helpers (ของเดิมคุณ)
 # =========================================================
+# -----------------------------
+# DB config (รองรับตั้งค่า path ผ่าน Render env ได้)
+# -----------------------------
+DB_PATH = os.environ.get("DB_PATH", "chondaen_iqc_bgm.db")
+
+
+def get_db():
+    if not hasattr(g, "_database"):
+        g._database = sqlite3.connect(DB_PATH)
+        g._database.row_factory = sqlite3.Row
+    return g._database
+
+
+def ensure_columns(db, table: str, columns: dict):
+    """columns = {col_name: 'SQL_TYPE'}"""
+    existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+    for col, col_type in columns.items():
+        if col not in existing:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+
+
+def init_db():
+    db = get_db()
+
+    # ตาราง users
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        )
+    """)
+
+    # ตาราง qc_results (สร้างให้ครบคอลัมน์ที่ระบบใช้จริง)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS qc_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            result_date TEXT,
+            test_name TEXT,
+            level TEXT,
+            value REAL,
+            ref_min REAL,
+            ref_max REAL,
+            bgm_serial TEXT,
+            strip_lot TEXT,
+            strip_exp TEXT,
+            control_lot TEXT,
+            control_exp TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+
+    # เผื่อเคยสร้างตารางเก่าไว้แล้ว: เติมคอลัมน์ที่ขาดให้ครบอัตโนมัติ
+    ensure_columns(db, "qc_results", {
+        "user_id": "INTEGER",
+        "result_date": "TEXT",
+        "test_name": "TEXT",
+        "level": "TEXT",
+        "value": "REAL",
+        "ref_min": "REAL",
+        "ref_max": "REAL",
+        "bgm_serial": "TEXT",
+        "strip_lot": "TEXT",
+        "strip_exp": "TEXT",
+        "control_lot": "TEXT",
+        "control_exp": "TEXT",
+    })
+
+    db.commit()
+
+
+# -----------------------------
+# เรียก init_db + ensure_admin_user ตอนเริ่มรันแอป
+# (ให้คงบล็อคนี้ไว้ท้ายไฟล์เหมือนเดิม)
+# -----------------------------
+with app.app_context():
+    init_db()
+    ensure_admin_user()
+
 def _sign(x: float) -> int:
     if x > 0:
         return 1
