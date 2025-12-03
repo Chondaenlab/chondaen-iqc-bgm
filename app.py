@@ -1,13 +1,11 @@
-from flask import (
-    Flask, render_template, request, redirect,
-    url_for, session, flash, g, make_response
-)
+from flask import Flask, g, session, flash, redirect, url_for, request, render_template, make_response
+import os, sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
-import sqlite3
-import datetime
-import os
-from flask import g
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
+
 
 # =========================================================
 # Westgard / Stats Helpers (ของเดิมคุณ)
@@ -82,15 +80,30 @@ def init_db():
     })
 
     db.commit()
+def ensure_admin_user():
+    db = get_db()
+    row = db.execute("SELECT id FROM users WHERE username = ?", ("Admin",)).fetchone()
+    if row is None:
+        pw_hash = generate_password_hash("111")
+        db.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            ("Admin", pw_hash),
+        )
+        db.commit()
+@app.before_request
+def _startup_once():
+    # รันครั้งเดียวต่อ process ตอนมี request แรก
+    if not getattr(app, "_db_inited", False):
+        init_db()
+        ensure_admin_user()
+        app._db_inited = True
 
 
 # -----------------------------
 # เรียก init_db + ensure_admin_user ตอนเริ่มรันแอป
 # (ให้คงบล็อคนี้ไว้ท้ายไฟล์เหมือนเดิม)
 # -----------------------------
-with app.app_context():
-    init_db()
-    ensure_admin_user()
+
 
 def _sign(x: float) -> int:
     if x > 0:
